@@ -23,14 +23,30 @@ def generate_dataset(seed=None,num_accounts=None,num_normal_transactions=None):
     if num_accounts < 10 or num_normal_transactions < 20: raise ValueError("Use at least 10 accounts and 20 normal transactions for a meaningful prototype.")
     rng=random.Random(seed); ds=GeneratedDataset(); base=dt.datetime(2026,1,1)
     for i,name in enumerate(["Nilgiri National Bank","Coromandel Trust","Vellore Cooperative Bank","Union Bharat Bank"],1): ds.banks.append({"bank_id":f"BANK{i:03d}","bank_name":name,"branch_code":f"BR{1000+i}"})
-    for i in range(1,max(10,num_accounts//6)+1): ds.devices.append({"device_id":f"DEV{i:04d}","device_type":rng.choice(DEVICE_TYPES)})
-    for i in range(1,max(10,num_accounts//5)+1):
+    # Small pool of devices/IPs that a MINORITY of accounts incidentally share (e.g. a
+    # shared home router, a family device) - kept deliberately small and low-probability
+    # so it stays a realistic minority signal instead of touching most of the population.
+    SHARED_POOL_SIZE=20; SHARED_TOUCH_PROB=0.10
+    for i in range(1,SHARED_POOL_SIZE+1): ds.devices.append({"device_id":f"DEVSHR{i:04d}","device_type":rng.choice(DEVICE_TYPES)})
+    for i in range(1,SHARED_POOL_SIZE+1):
         city,lat,lon=rng.choice(CITIES); ds.ips.append({"ip":f"10.{rng.randint(0,254)}.{rng.randint(0,254)}.{i%254+1}","geo_location":f"{city} ({lat:.4f},{lon:.4f})"})
+    shared_devices=list(ds.devices); shared_ips=list(ds.ips)
     for i in range(1,num_accounts+1):
         aid=f"ACC{i:05d}"; ds.accounts.append({"account_id":aid,"name":f"Customer_{i:05d}","account_type":rng.choice(ACCOUNT_TYPES),"risk_score":0.0,"created_date":(base-dt.timedelta(days=rng.randint(30,1500))).date().isoformat()})
         ds.account_bank.append({"account_id":aid,"bank_id":rng.choice(ds.banks)["bank_id"]})
-        for d in rng.sample(ds.devices,k=rng.randint(1,2)): ds.account_device.append({"account_id":aid,"device_id":d["device_id"]})
-        for ip in rng.sample(ds.ips,k=rng.randint(1,2)): ds.account_ip.append({"account_id":aid,"ip":ip["ip"]})
+        # Every account gets its own unique personal device and IP by default - this
+        # mirrors real banking behaviour where most customers use their own phone/home
+        # network, so it never coincidentally collides with another account.
+        personal_device={"device_id":f"DEVP{i:05d}","device_type":rng.choice(DEVICE_TYPES)}
+        ds.devices.append(personal_device); ds.account_device.append({"account_id":aid,"device_id":personal_device["device_id"]})
+        city,lat,lon=rng.choice(CITIES)
+        personal_ip={"ip":f"172.16.{(i//254)%254}.{i%254+1}","geo_location":f"{city} ({lat:.4f},{lon:.4f})"}
+        ds.ips.append(personal_ip); ds.account_ip.append({"account_id":aid,"ip":personal_ip["ip"]})
+        # Only a small minority also touch the small shared pool - this is the realistic
+        # "incidental sharing" case, kept rare enough that it doesn't drown out deliberate
+        # fraud-ring device/IP sharing added later in this function.
+        if rng.random()<SHARED_TOUCH_PROB: ds.account_device.append({"account_id":aid,"device_id":rng.choice(shared_devices)["device_id"]})
+        if rng.random()<SHARED_TOUCH_PROB: ds.account_ip.append({"account_id":aid,"ip":rng.choice(shared_ips)["ip"]})
     ids=[a["account_id"] for a in ds.accounts]; counter=1
     def add(sender,receiver,amount,spread=180,status=None):
         nonlocal counter

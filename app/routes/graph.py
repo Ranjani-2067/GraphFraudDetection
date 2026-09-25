@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import APIRouter,Depends,Query
 from app.routes.dependencies import graph_repo,analytics
 from app.repositories.graph_repository import GraphRepository
@@ -22,4 +23,4 @@ def communities(a:GraphAnalytics=Depends(analytics)): return a.louvain()
 @router.get("/pagerank")
 def pagerank(a:GraphAnalytics=Depends(analytics)): return a.pagerank()
 @router.get("/cycles")
-def cycles(max_cycle_length:int=Query(6,ge=2,le=8),max_cycles:int=Query(100,ge=1,le=500),a:GraphAnalytics=Depends(analytics)): return a.cycles(max_cycle_length,max_cycles)
+def cycles(max_cycle_length:int=Query(6,ge=2,le=8),max_cycles:int=Query(100,ge=1,le=500),max_span_days:Optional[int]=Query(14,ge=1,description="Filter out cycles whose transactions span more than this many days; omit for unfiltered structural cycles."),a:GraphAnalytics=Depends(analytics)): return a.cycles(max_cycle_length,max_cycles,max_span_days)

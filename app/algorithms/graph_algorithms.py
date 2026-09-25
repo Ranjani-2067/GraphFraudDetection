@@ -1,6 +1,25 @@
 from __future__ import annotations
+import datetime as dt
 import networkx as nx
 from app.algorithms.graph_projection import build_directed_multigraph, build_simple_weighted_graph
+
+def _cycle_span_days(g, cyc):
+    """Days between the earliest and latest transaction timestamp in a cycle.
+    Real money-laundering layering happens in a compressed window; a 'cycle'
+    stitched together from transactions months apart is very likely a
+    coincidental structural artifact rather than a real fraud pattern.
+    Returns None if timestamps are missing/unparseable (filter is skipped)."""
+    timestamps=[]
+    for i,u in enumerate(cyc):
+        v=cyc[(i+1)%len(cyc)]
+        data=g.get_edge_data(u,v) or {}
+        first=next(iter(data.values()),None)
+        ts=first.get("timestamp") if first else None
+        if ts:
+            try: timestamps.append(dt.datetime.fromisoformat(ts))
+            except ValueError: pass
+    if len(timestamps)<2: return None
+    return (max(timestamps)-min(timestamps)).days
 
 class GraphAnalytics:
     def __init__(self,conn): self.conn=conn
@@ -14,12 +33,20 @@ class GraphAnalytics:
         return [{"community_id":i,"member_accounts":sorted(c),"community_size":len(c)} for i,c in enumerate(communities)]
     def pagerank(self):
         g=build_simple_weighted_graph(self.conn); scores=nx.pagerank(g,weight="weight") if g.nodes else {}; return [{"account_id":a,"score":float(s)} for a,s in sorted(scores.items(),key=lambda x:(-x[1],x[0]))]
-    def cycles(self,max_cycle_length=6,max_cycles=100):
+    def cycles(self,max_cycle_length=6,max_cycles=100,max_span_days=14):
+        """max_span_days filters out cycles whose transactions are spread across
+        more than this many days - real layering rings move money through the
+        loop in a tight window, so a wide-span 'cycle' is treated as a likely
+        coincidental structural artifact rather than a fraud signal. Pass
+        max_span_days=None to disable the filter (raw structural cycles)."""
         g=build_directed_multigraph(self.conn); result=[]; seen=set()
         for cyc in nx.simple_cycles(nx.DiGraph(g), length_bound=max_cycle_length):
             if len(cyc)<2 or len(cyc)>max_cycle_length: continue
             key=min(tuple(cyc[i:]+cyc[:i]) for i in range(len(cyc)))
             if key in seen: continue
+            if max_span_days is not None:
+                span=_cycle_span_days(g,cyc)
+                if span is not None and span>max_span_days: continue
             seen.add(key); txns=[]
             for i,u in enumerate(cyc):
                 v=cyc[(i+1)%len(cyc)]; data=g.get_edge_data(u,v) or {}; first=next(iter(data.values()),None)
